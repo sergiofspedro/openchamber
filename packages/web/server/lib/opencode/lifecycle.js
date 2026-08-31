@@ -723,7 +723,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       const serverInstance = await createManagedOpenCodeServerProcess({
         hostname: env.ENV_CONFIGURED_OPENCODE_HOSTNAME,
         port: spawnPort,
-        timeout: 30000,
+        timeout: 90000,
         cwd: state.openCodeWorkingDirectory,
         shellEnvKeysCount: Object.keys(shellEnv).length,
         env: stripAppImageArgv0Leak(applyProviderEnvAliases({

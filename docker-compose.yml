@@ -4,22 +4,78 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: openchamber
+    # 2026-08-31: sem isto o PID 1 e a propria aplicacao e nao recolhe filhos
+    # orfaos. Mediram-se 713 zombies, 325 deles com este container como pai.
+    init: true
+    # 2026-08-31: run web server as foreground process so Docker's init reaps
+    # children and restarts on crash. Without this, the entrypoint falls back
+    # to "cli.js logs" (a log tailer) which does NOT serve HTTP — port 3000
+    # goes dark and Tailscale serve returns 502.
+    command: bun packages/web/bin/cli.js serve --foreground --host 0.0.0.0
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3010:3000"
+      # Plannotator annotation UI (remote mode, 2026-08-21)
+      - "100.95.67.86:19432:19432"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./data/openchamber:/home/openchamber/.config/openchamber
       - ./data/opencode/share:/home/openchamber/.local/share/opencode
+      # Persist opencode runtime logs (incl. magic-context.log) across restarts (2026-08-21)
       - ./data/opencode/state:/home/openchamber/.local/state/opencode
       - ./data/opencode/config:/home/openchamber/.config/opencode
-      - ./data/ssh:/home/openchamber/.ssh
+      # magic-context keeps its config here and its memory DB in .local/share.
+      # Both must be mounted or every container recreate wipes the memory.
+      - ./data/cortexkit/config:/home/openchamber/.config/cortexkit
+      - ./data/cortexkit/share:/home/openchamber/.local/share/cortexkit
+      - ./data/opencode/omo:/home/openchamber/.omo
+      - ./data/ssh:/home/openchamber/.ssh:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data/opencode/tmp:/tmp/opencode
       - ./workspaces:/home/openchamber/workspaces
+      # The docs repo, at the same path as on the host so absolute paths in
+      # memory/vps/** and in the skills resolve identically inside and out.
+      # Without this the container cannot read OPENCODE-HANDOFF.md at all,
+      # and ssh from container to host is refused (publickey).
+      - /home/pipeline/pipeline/github/Claude:/home/pipeline/pipeline/github/Claude
+      - /home/pipeline/.openclaw/personal-context-vault:/home/openchamber/workspaces/obsidian-vault
+      - ./data/gitconfig:/home/openchamber/.gitconfig
+      - /run/user/1000/openclaw-secrets:/run/secrets:ro
     environment:
       # Docker binds OpenChamber to 0.0.0.0 for port mapping, so UI auth is required.
       # Set this before starting, for example:
       #   OPENCHAMBER_UI_PASSWORD="$(openssl rand -base64 24)" docker compose up -d
       OPENCHAMBER_UI_PASSWORD: ${OPENCHAMBER_UI_PASSWORD:?Set OPENCHAMBER_UI_PASSWORD before exposing OpenChamber through Docker}
+      # Scoped narrowly for the Telegram notification bridge plugin — not full Infisical access.
+      TELEGRAM_BOT_TOKEN_GUARDIAN: ${TELEGRAM_BOT_TOKEN_GUARDIAN}
+      TELEGRAM_USER_ID: ${TELEGRAM_USER_ID}
+      OPENCODE_ENABLE_EXA: "1"
+      # FlowDeck injecta um pacote proprio de servidores MCP e sobrepoe-se ao
+      # opencode.jsonc: faz `Object.assign(cfg.mcp, mcps)`, sem preservar o que ja
+      # la estava. Seis destes falhavam a cada sessao (visivel como "server
+      # unavailable" no opencode.log). O playwright dele pedia --browser chrome,
+      # que nao esta instalado aqui, e sem --headless num container sem display.
+      # Desligado, a definicao local (binario headless + chromium) sobrevive.
+      # Ficam de fora context7 e websearch, que funcionam.
+      FLOWDECK_DISABLE_MCP: "playwright,memory,sequential-thinking,magic,token-optimizer,github"
+      # Ceiling for model output tokens (2026-08-20, mirror of local). Default engine value
+      # is 32000; 8000 caps runaway long outputs without breaking multi-step tool calls.
+      # Ceiling for model output tokens (2026-08-20, mirror of local). Default engine
+      # value is 32000; 8000 caps runaway long outputs without breaking multi-step
+      # tool calls. NAO subir por causa do historian: o limite dele vive em
+      # magic-context.jsonc como historian.maxTokens (verificado na documentacao
+      # do cortexkit a 2026-08-27).
+      OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX: "8000"
+      # Plannotator remote mode (fixed port, 2026-08-21)
+      PLANNOTATOR_REMOTE: "1"
+      PLANNOTATOR_PORT: "19432"
+      OMO_QUESTION_TIMEOUT_MS: "600000"
+      # Wall-clock ceiling for ONE continuous unattended stretch (6h), after which the
+      # agent is told to stop and write a report, and Gio gets a Telegram. Replaces the
+      # loop-guard token ceiling removed 2026-08-18: a cumulative token cap cannot tell a
+      # runaway from a session that simply lives a long time, and these sessions are meant
+      # to live for months. Only read when OMO_QUESTION_TIMEOUT_MS > 0, i.e. here.
+      OMO_UNATTENDED_DEADLINE_MS: "21600000"
     # OPENCHAMBER_HOST: 0.0.0.0  # Bind address (default in Docker entrypoint: 0.0.0.0)
     # OPENCHAMBER_TUNNEL_PROVIDER: cloudflare
     # OPENCHAMBER_TUNNEL_MODE: quick  # quick | managed-remote | managed-local
@@ -30,4 +86,21 @@ services:
     # OPENCODE_HOST: http://172.17.0.1:4096 # Connect to external OpenCode server
     # OPENCODE_SKIP_START: true # skip start opencode
     # OPENCHAMBER_OPENCODE_HOSTNAME: 0.0.0.0 # Bind OpenCode to all interfaces
+    group_add:
+      - "988"
     restart: unless-stopped
+    mem_limit: 10g  # 8->10g 2026-08-29: o pre-voo passa a medir o cgroup
+    # 2 GiB de swap, nao os 12g que o Docker assumia por omissao (2x mem_limit).
+    # Com 6 GiB de swap o container sozinho enchia os 8 GiB do host: 2026-08-23,
+    # load average 46 por thrashing. Um pico transitorio cabe; um vazamento nao.
+    memswap_limit: 10g
+    mem_reservation: 4g
+    oom_score_adj: "-500"
+    pids_limit: 2048
+    networks:
+      - pipeline-net
+
+networks:
+  pipeline-net:
+    external: true
+    name: infisical_pipeline-net
