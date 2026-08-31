@@ -95,7 +95,7 @@ ENV PATH="/home/openchamber/.cargo/bin:${PATH}"
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
 # Plain `cargo install rtk` pulls a name-colliding, unrelated crate (Rust Type Kit) from
 # crates.io -- rtk-ai/rtk's own README warns about this. Install from the real source.
-RUN cargo install --git https://github.com/rtk-ai/rtk --force
+RUN cargo install --git https://github.com/rtk-ai/rtk --rev v0.42.4 --force
 RUN git clone --depth 1 https://github.com/DVNghiem/FlowDeck.git /tmp/flowdeck-build \
   && cargo install --path /tmp/flowdeck-build/crates/fdx \
   && rm -rf /tmp/flowdeck-build
