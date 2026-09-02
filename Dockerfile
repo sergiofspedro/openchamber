@@ -6,12 +6,27 @@ FROM base AS deps
 WORKDIR /app
 COPY package.json bun.lock ./
 COPY bun-patches ./bun-patches
+# Acrescentados 2026-09-01: o `postinstall` do monorepo corre
+#   node ./fix-deprecation.js && patch-package && ensure-electron.mjs --best-effort
+# e a fase deps nao copiava nenhum deles, pelo que falhava com
+#   error: Module not found '/app/fix-deprecation.js'
+# Era por isso que o install corria com --ignore-scripts. So que isso desligava
+# TODOS os scripts, incluindo o do motor nativo do Tailwind v4 (@tailwindcss/oxide),
+# e sem ele o CSS saia sem uma unica classe utilitaria: a UI aparecia como HTML cru.
+COPY fix-deprecation.js ./
+COPY patches ./patches
+COPY packages/electron/scripts ./packages/electron/scripts
 COPY packages/ui/package.json ./packages/ui/
 COPY packages/web/package.json ./packages/web/
 COPY packages/electron/package.json ./packages/electron/
 COPY packages/vscode/package.json ./packages/vscode/
 COPY packages/mobile/package.json ./packages/mobile/
-RUN bun install --frozen-lockfile --ignore-scripts
+# --ignore-scripts removido 2026-09-01. O Tailwind v4 instala o seu motor nativo
+# (@tailwindcss/oxide) por script de pos-instalacao. Sem ele a compilacao corre e
+# gera o CSS, mas SEM classes utilitarias: medido no ficheiro servido, 584 variaveis
+# de tema presentes e ZERO utilitarias (.flex, .grid, .p-4, .text-sm todas a zero).
+# A UI aparecia como HTML cru -- conteudo todo correcto, layout nenhum.
+RUN bun install --frozen-lockfile
 
 FROM deps AS builder
 WORKDIR /app

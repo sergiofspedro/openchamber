@@ -42,10 +42,30 @@ services:
       - ./data/gitconfig:/home/openchamber/.gitconfig
       - /run/user/1000/openclaw-secrets:/run/secrets:ro
     environment:
-      # Docker binds OpenChamber to 0.0.0.0 for port mapping, so UI auth is required.
-      # Set this before starting, for example:
-      #   OPENCHAMBER_UI_PASSWORD="$(openssl rand -base64 24)" docker compose up -d
-      OPENCHAMBER_UI_PASSWORD: ${OPENCHAMBER_UI_PASSWORD:?Set OPENCHAMBER_UI_PASSWORD before exposing OpenChamber through Docker}
+      # Autenticacao da UI desligada em 2026-08-31, por decisao do dono, depois de o
+      # login ficar impossivel: na versao 1.22.0 o proprio `POST /api/auth/login`
+      # responde `401 Authentication required` -- exige autenticacao para autenticar.
+      # A UI carregava e ficava presa no ecra de carregamento, igual em janela normal
+      # e privada, porque nunca conseguia passar do 401.
+      #
+      # CORRECCAO a uma leitura minha errada, no mesmo dia: eu tinha escrito aqui que
+      # o bind 0.0.0.0 "ja nao era verdade" por ver `127.0.0.1:3010` no anfitriao.
+      # Sao coisas diferentes: a app liga a 0.0.0.0 DENTRO do container, e e o Docker
+      # que so a expoe em 127.0.0.1. Ao remover a password o container entrou em ciclo
+      # de reinicio com "OpenChamber refuses to bind to 0.0.0.0 without UI
+      # authentication". A variavel abaixo e a valvula que os proprios autores preveem.
+      #
+      # Porque e aceitavel aqui, medido a 2026-08-31:
+      #   3010  -> 127.0.0.1 apenas no anfitriao (nao ha escuta em 0.0.0.0)
+      #   19432 -> 100.95.67.86 (Tailscale)
+      #   148.230.116.248:3010 -> sem resposta pela internet publica
+      # O acesso chega so pelo `tailscale serve`, que e "tailnet only": a LAN a que a
+      # app se expoe e a rede interna do container, nao a Internet.
+      #
+      # Para repor a password quando o bug do login estiver corrigido a montante:
+      # apagar a linha ALLOW_UNAUTHENTICATED_LAN e descomentar esta:
+      #   OPENCHAMBER_UI_PASSWORD: ${OPENCHAMBER_UI_PASSWORD:-}
+      OPENCHAMBER_ALLOW_UNAUTHENTICATED_LAN: "true"
       # Scoped narrowly for the Telegram notification bridge plugin — not full Infisical access.
       TELEGRAM_BOT_TOKEN_GUARDIAN: ${TELEGRAM_BOT_TOKEN_GUARDIAN}
       TELEGRAM_USER_ID: ${TELEGRAM_USER_ID}
