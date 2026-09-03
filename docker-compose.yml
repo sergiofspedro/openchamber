@@ -11,7 +11,18 @@ services:
     # children and restarts on crash. Without this, the entrypoint falls back
     # to "cli.js logs" (a log tailer) which does NOT serve HTTP — port 3000
     # goes dark and Tailscale serve returns 502.
-    command: bun packages/web/bin/cli.js serve --foreground --host 0.0.0.0
+    # 2026-09-03 (B1): sh wrapper sources /run/secrets/active.env (Infisical sidecar
+    # output) so TELEGRAM_BOT_TOKEN_GUARDIAN + TELEGRAM_USER_ID are visible to bun.
+    # set -a exports every var assigned; set +a reverts. `exec` replaces sh with
+    # bun so signals (SIGTERM) reach the openchamber process directly.
+    command:
+      - sh
+      - -c
+      - |
+        set -a
+        . /run/secrets/active.env
+        set +a
+        exec bun packages/web/bin/cli.js serve --foreground --host 0.0.0.0
     ports:
       - "127.0.0.1:3010:3000"
       # Plannotator annotation UI (remote mode, 2026-08-21)
@@ -41,6 +52,19 @@ services:
       - /home/pipeline/.openclaw/personal-context-vault:/home/openchamber/workspaces/obsidian-vault
       - ./data/gitconfig:/home/openchamber/.gitconfig
       - /run/user/1000/openclaw-secrets:/run/secrets:ro
+      # 2026-09-03: bind-mount the Infisical sidecar's /run/secrets dir
+      # (same path on the host; the sidecar writes active.env there and the
+      # openchamber service picks it up via env_file above).
+      - ./secrets:/run/secrets:ro
+    # 2026-09-03: secrets from Infisical are rendered by the infisical-agent
+    # sidecar to /run/secrets/active.env (60s polling). Compose's `env_file`
+    # does NOT work here because paths are evaluated on the host at parse time,
+    # and the file only exists inside the container after the sidecar writes
+    # it. Workaround: wrap the command in sh -c to source the file before exec.
+    # depends_on still gates startup on the sidecar's healthcheck.
+    depends_on:
+      infisical-agent:
+        condition: service_healthy
     environment:
       # Autenticacao da UI desligada em 2026-08-31, por decisao do dono, depois de o
       # login ficar impossivel: na versao 1.22.0 o proprio `POST /api/auth/login`
@@ -66,9 +90,9 @@ services:
       # apagar a linha ALLOW_UNAUTHENTICATED_LAN e descomentar esta:
       #   OPENCHAMBER_UI_PASSWORD: ${OPENCHAMBER_UI_PASSWORD:-}
       OPENCHAMBER_ALLOW_UNAUTHENTICATED_LAN: "true"
-      # Scoped narrowly for the Telegram notification bridge plugin — not full Infisical access.
-      TELEGRAM_BOT_TOKEN_GUARDIAN: ${TELEGRAM_BOT_TOKEN_GUARDIAN}
-      TELEGRAM_USER_ID: ${TELEGRAM_USER_ID}
+      # TELEGRAM_BOT_TOKEN_GUARDIAN + TELEGRAM_USER_ID are now injected by the
+      # infisical-agent sidecar (B1 migration, 2026-09-03) via /run/secrets/active.env.
+      # See `infisical-agent` service below. Plaintext .env no longer needs them.
       OPENCODE_ENABLE_EXA: "1"
       # FlowDeck injecta um pacote proprio de servidores MCP e sobrepoe-se ao
       # opencode.jsonc: faz `Object.assign(cfg.mcp, mcps)`, sem preservar o que ja
@@ -119,6 +143,35 @@ services:
     pids_limit: 2048
     networks:
       - pipeline-net
+
+  # 2026-09-03: Infisical Agent sidecar (B1 migration). Renders
+  # vps-shared/98137933/prod/openchamber/active secrets to
+  # /run/secrets/active.env (bind-mounted to openchamber service above).
+  # Same pattern as dashboard-b2b-infisical-agent. Requires Universal Auth
+  # identity `openchamber-infisical-agent` with read access to vps-shared
+  # project — see openchamber-scratch/B1-OWNER-ACTION-20260903.md for the
+  # 3-step setup the owner must run in the Infisical UI.
+  infisical-agent:
+    build:
+      context: ./infisical-agent
+      dockerfile: Dockerfile
+    image: openchamber/infisical-agent:latest
+    container_name: openchamber-infisical-agent
+    restart: unless-stopped
+    command: ["agent", "--config", "/config/agent-config.yaml"]
+    volumes:
+      - ./secrets:/run/secrets
+      - ./infisical-agent/agent-config.yaml:/config/agent-config.yaml:ro
+      - /home/pipeline/pipeline/docker/infisical-agent-secrets/openchamber.client-id:/run/secrets/infisical/client-id:ro
+      - /home/pipeline/pipeline/docker/infisical-agent-secrets/openchamber.client-secret:/run/secrets/infisical/client-secret:ro
+    networks: [pipeline-net]
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /run/secrets/active.env"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    user: "0:0"
 
 networks:
   pipeline-net:

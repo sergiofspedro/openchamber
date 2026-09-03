@@ -74,3 +74,4 @@ workspaces/
 test-results/
 artifacts/
 *.bak-20*
+secrets/
