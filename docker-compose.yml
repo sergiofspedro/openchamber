@@ -22,7 +22,7 @@ services:
         set -a
         . /run/secrets/active.env
         set +a
-        exec bun packages/web/bin/cli.js serve --foreground --host 0.0.0.0
+        exec bun packages/web/bin/cli.js serve --port 3000 --foreground --host 0.0.0.0
     ports:
       - "127.0.0.1:3010:3000"
       # Plannotator annotation UI (remote mode, 2026-08-21)
