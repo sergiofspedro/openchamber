@@ -52,10 +52,11 @@ services:
       - /home/pipeline/.openclaw/personal-context-vault:/home/openchamber/workspaces/obsidian-vault
       - ./data/gitconfig:/home/openchamber/.gitconfig
       - /run/user/1000/openclaw-secrets:/run/secrets:ro
-      # 2026-09-03: bind-mount the Infisical sidecar's /run/secrets dir
-      # (same path on the host; the sidecar writes active.env there and the
-      # openchamber service picks it up via env_file above).
-      - ./secrets:/run/secrets:ro
+      # 2026-09-03 (tmpfs hardening): shared in-memory volume (tmpfs, 1 MiB)
+      # with the infisical-agent sidecar. The sidecar writes active.env to it;
+      # this service reads it. active.env lives ONLY in RAM — no host-disk
+      # presence, no rest-at-rest on the filesystem.
+      - openchamber_run-secrets:/run/secrets:ro
     # 2026-09-03: secrets from Infisical are rendered by the infisical-agent
     # sidecar to /run/secrets/active.env (60s polling). Compose's `env_file`
     # does NOT work here because paths are evaluated on the host at parse time,
@@ -120,6 +121,14 @@ services:
       # runaway from a session that simply lives a long time, and these sessions are meant
       # to live for months. Only read when OMO_QUESTION_TIMEOUT_MS > 0, i.e. here.
       OMO_UNATTENDED_DEADLINE_MS: "21600000"
+      # 2026-09-18: open-mem sem chave de API cria uma sessao unica '[open-mem] AI compression' no agente por
+      # defeito (orchestrator, todas as tools) e alimenta-a com cada saida de tool: 24% dos tokens do VPS numa
+      # semana, e chegou a agir como trabalhador autonomo. Precedencia do plugin: defaults < .open-mem/config.json
+      # do projeto < variaveis OPEN_MEM_*. Os config.json vivem na camada do contentor (perdem-se num recreate);
+      # estas variaveis nao. Mantem as tools mem-* e a injecao de contexto. Ver notes/VPS-OPEN-MEM-20260918.md
+      OPEN_MEM_COMPRESSION: "false"
+      OPEN_MEM_FOLDER_CONTEXT: "false"
+      OPEN_MEM_IGNORED_TOOLS: "bash,read,glob,grep,fdx-ls,fdx-read,fdx-grep,fdx-git,pty_read,pty_spawn,pty_kill,task,encode,invalid"
     # OPENCHAMBER_HOST: 0.0.0.0  # Bind address (default in Docker entrypoint: 0.0.0.0)
     # OPENCHAMBER_TUNNEL_PROVIDER: cloudflare
     # OPENCHAMBER_TUNNEL_MODE: quick  # quick | managed-remote | managed-local
@@ -134,6 +143,11 @@ services:
       - "988"
     restart: unless-stopped
     mem_limit: 10g  # 8->10g 2026-08-29: o pre-voo passa a medir o cgroup
+    # 2026-09-12: 3 dos 4 vCPU. Nenhum container tinha tecto de CPU e o
+    # `opencode serve` daqui de dentro levou a maquina a load 8,7, o que fez o
+    # New API recusar TODAS as cadeias com `system cpu overloaded`. Tecto alto de
+    # proposito -- consome 1,18 -- mas deixa sempre um nucleo para os outros 37.
+    cpus: 3.0
     # 2 GiB de swap, nao os 12g que o Docker assumia por omissao (2x mem_limit).
     # Com 6 GiB de swap o container sozinho enchia os 8 GiB do host: 2026-08-23,
     # load average 46 por thrashing. Um pico transitorio cabe; um vazamento nao.
@@ -143,6 +157,7 @@ services:
     pids_limit: 2048
     networks:
       - pipeline-net
+      - infra-intel-internal
 
   # 2026-09-03: Infisical Agent sidecar (B1 migration). Renders
   # vps-shared/98137933/prod/openchamber/active secrets to
@@ -152,15 +167,21 @@ services:
   # project — see openchamber-scratch/B1-OWNER-ACTION-20260903.md for the
   # 3-step setup the owner must run in the Infisical UI.
   infisical-agent:
+    # 2026-09-12: tecto de memoria. Nenhum destes containers tinha um,
+    # e um vazamento levava a maquina inteira em vez de ser abatido.
+    mem_limit: 494m
+    memswap_limit: 988m
     build:
       context: ./infisical-agent
       dockerfile: Dockerfile
-    image: openchamber/infisical-agent:latest
+    image: openchamber/infisical-agent:latest # custom build — no upstream tag
     container_name: openchamber-infisical-agent
     restart: unless-stopped
     command: ["agent", "--config", "/config/agent-config.yaml"]
     volumes:
-      - ./secrets:/run/secrets
+      # 2026-09-03 (tmpfs hardening): write active.env to the shared tmpfs
+      # volume, NOT to a host bind mount. active.env lives only in RAM.
+      - openchamber_run-secrets:/run/secrets
       - ./infisical-agent/agent-config.yaml:/config/agent-config.yaml:ro
       - /home/pipeline/pipeline/docker/infisical-agent-secrets/openchamber.client-id:/run/secrets/infisical/client-id:ro
       - /home/pipeline/pipeline/docker/infisical-agent-secrets/openchamber.client-secret:/run/secrets/infisical/client-secret:ro
@@ -177,3 +198,22 @@ networks:
   pipeline-net:
     external: true
     name: infisical_pipeline-net
+
+  # 2026-09-12 (Phase 4): internal observability network hosting infra-intel-toise
+  # (Toise MCP at http://infra-intel-toise:8080/mcp). Declared external so the
+  # openchamber service can join it without compose owning its lifecycle.
+  infra-intel-internal:
+    external: true
+    name: infra-intel-internal
+
+# 2026-09-03 (tmpfs hardening): shared in-memory volume (tmpfs, 1 MiB) between
+# the infisical-agent sidecar and the main openchamber service. Both mount it
+# at /run/secrets; the sidecar writes active.env, the main service reads it.
+# Pre-create the volume before `docker compose up`:
+#   docker volume create --driver local --opt type=tmpfs --opt device=tmpfs \
+#     --opt o=size=1m openchamber_run-secrets
+# active.env is gone on Docker daemon restart (tmpfs is RAM); the sidecar will
+# re-poll and re-write within 60s of restart.
+volumes:
+  openchamber_run-secrets:
+    external: true
