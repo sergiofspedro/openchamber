@@ -142,6 +142,27 @@ services:
     group_add:
       - "988"
     restart: unless-stopped
+    # 2026-10-02: sonda o MOTOR, nao o servidor web. O `/health` do servidor
+    # responde 200 COM O MOTOR MORTO -- foi assim que o auto-dispatch esteve 5
+    # dias sem despachar nada (2026-09-26 a 10-01) e nada avisou. O
+    # `/api/health`, que diria a verdade, exige autenticacao (401), logo um
+    # healthcheck nao o pode usar.
+    #
+    # O script procura a porta do motor e espera um 401 sem credenciais: um 401
+    # prova processo + escuta + autenticacao de uma vez, e nao precisa de
+    # segredo nenhum. Vive no bind mount `data/opencode/config/scripts/`.
+    #
+    # interval 60s + retries 5 = cinco falhas seguidas antes de unhealthy. O
+    # servidor tem auto-cura propria do motor e durante o respawn nao ha porta;
+    # um respawn normal nao chega a cinco, o motor morto com a auto-cura
+    # encravada chega. start_period conservador: nao tenho medicao do arranque
+    # a frio, e prefiro esperar de mais a declarar unhealthy quem ainda sobe.
+    healthcheck:
+      test: ["CMD", "bash", "/home/openchamber/.config/opencode/scripts/healthcheck-motor.sh"]
+      interval: 60s
+      timeout: 15s
+      retries: 5
+      start_period: 300s
     mem_limit: 10g  # 8->10g 2026-08-29: o pre-voo passa a medir o cgroup
     # 2026-09-12: 3 dos 4 vCPU. Nenhum container tinha tecto de CPU e o
     # `opencode serve` daqui de dentro levou a maquina a load 8,7, o que fez o
