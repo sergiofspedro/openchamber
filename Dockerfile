@@ -86,6 +86,27 @@ ENV PATH=${NPM_CONFIG_PREFIX}/bin:${PATH}
 
 RUN npm config set prefix /home/openchamber/.npm-global && mkdir -p /home/openchamber/.npm-global && \
   mkdir -p /home/openchamber/.local /home/openchamber/.config /home/openchamber/.ssh && \
+  # ATENCAO, DIVERGENCIA CONHECIDA (medida 2026-10-12):
+  #
+  #   este ficheiro fixa  1.18.25
+  #   a imagem que CORRE tem  1.18.21
+  #
+  # Logo um `docker build` NAO reproduz producao: traz uma versao diferente. Se
+  # estas a reconstruir por outra razao qualquer -- uma dependencia, uma
+  # correccao no entrypoint --, leva este salto de versao com ela, sem o ter
+  # pedido. Confirma com:
+  #
+  #   docker exec openchamber opencode --version
+  #
+  # Decisao do dono a 2026-10-12: o pin FICA como declaracao de intencao, e a
+  # subida de versao e um acto deliberado e testavel, nao um efeito secundario
+  # de um rebuild. Alinhar o ficheiro para 1.18.21 foi considerado e recusado.
+  #
+  # E E POR AQUI QUE SE CALAM os tres avisos de `chmod` do `.ssh` que aparecem
+  # em cada arranque (ver protocolos/auto-dispatch/TROUBLESHOOTING.md 19): o
+  # entrypoint vive na camada da imagem, logo guardar o `chmod` por um teste de
+  # permissoes exige passar por aqui. Nao se fez isolado porque um rebuild so
+  # para calar um aviso benigno traria o salto de versao acima.
   npm install -g opencode-ai@1.18.25
 
 # Motores de browser (deps de sistema instaladas acima como root).
