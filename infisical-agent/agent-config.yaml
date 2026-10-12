@@ -1,11 +1,16 @@
 # Infisical Agent config for openchamber
-# Renders secrets from /openchamber/ path as dotenv to /run/secrets/active.env
-# (per INFISICAL-STACK-20260902.md, the openchamber project uses path /openchamber/,
-#  not /). Restart of openchamber container picks up changes automatically.
-# CLI v0.43.128 expects: source-path OR template-content + destination-path
-# + config.polling-interval. The function is `secret` (not listSecrets).
+# 2026-09-03 (ai-pipeline consolidation): renders only the 3 keys openchamber
+# needs (filter chain) from ai-pipeline / prod into /run/secrets/active.env.
+# active.env lives on a shared tmpfs volume (see docker-compose.yml).
+# CLI v0.43.128; the `secret` function returns a list, iterate with `range`.
 infisical:
-  address: "https://pipeline-vps-new.tailbbccd8.ts.net:8437/api"
+  # 2026-10-12: endereco interno em vez do tailnet. O tailscale 1.104.1 prende
+  # os listeners do `serve` a interface tailscale0 (SO_BINDTODEVICE), logo o
+  # :8437 e inalcancavel de uma bridge do Docker -- era isto que punha o
+  # openchamber e o proxy em ciclo de reinicio. O Infisical esta na mesma rede.
+  # Valor anterior, para reverter:
+  #address: "https://pipeline-vps-new.tailbbccd8.ts.net:8437/api"
+  address: "http://infisical:8080/api"
   retry-strategy:
     max-retries: 5
     max-delay: "10s"
@@ -19,11 +24,13 @@ auth:
 
 templates:
   - template-content: |
-      {{- with secret "98137933-832d-4f27-a1c6-7fc5e61f843a" "prod" "/openchamber" }}
-      {{- range . }}
+      {{- with secret "bdec46df-92ea-43ca-8cd3-3607add4205b" "prod" "/" -}}
+      {{- range . -}}
+      {{- if or (eq .Key "OPENCHAMBER_UI_PASSWORD") (eq .Key "TELEGRAM_BOT_TOKEN_GUARDIAN") (eq .Key "TELEGRAM_USER_ID") (eq .Key "GITHUB_TOKEN_OPENCHAMBER") -}}
       {{ .Key }}={{ .Value }}
-      {{- end }}
-      {{- end }}
+      {{ end -}}
+      {{- end -}}
+      {{- end -}}
     destination-path: /run/secrets/active.env
     config:
       polling-interval: 60s
