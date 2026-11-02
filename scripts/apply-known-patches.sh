@@ -6,6 +6,18 @@
 # server resolves plugins, ~60-120s into container startup.
 set -u
 
+# 2026-10-29: repoe os wrappers fdx-* se faltarem (ver Dockerfile). O instalador do dispatch (volume
+# montado) tem prioridade sobre a copia da imagem: e o que o gate usa e pode ser mais recente.
+FDX_DIR="/home/openchamber/.local/bin"
+if [ ! -x "$FDX_DIR/fdx-read" ] || [ ! -x "$FDX_DIR/fdx-validate" ] || [ ! -x "$FDX_DIR/fdx-worktree" ]; then
+  for inst in /home/openchamber/.config/opencode/dispatch/bin/install-fdx-wrappers.sh /home/openchamber/install-fdx-wrappers.sh; do
+    if [ -f "$inst" ] && bash "$inst" "$FDX_DIR" >/dev/null 2>&1; then
+      echo "[apply-known-patches] wrappers fdx-* em falta: reinstalados com $inst"
+      break
+    fi
+  done
+fi
+
 FLOWDECK_FILE="/home/openchamber/.cache/opencode/packages/@dv.nghiem/flowdeck@0.7.0-alpha.4/node_modules/@dv.nghiem/flowdeck/dist/index.js"
 
 i=0

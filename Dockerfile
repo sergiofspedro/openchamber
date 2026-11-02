@@ -69,7 +69,21 @@ RUN npx --yes playwright install-deps chromium webkit firefox
 
 # procps: o agente precisa de `free` para medir a memoria antes de decidir
 # o tamanho de uma onda de subagentes.
-RUN apt-get update && apt-get install -y --no-install-recommends procps && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends procps bzip2 && rm -rf /var/lib/apt/lists/*
+
+# 2026-10-28 — cli-plugins: docker compose v5.6.1 + buildx v0.38.1 (pins estaveis nessa data).
+# Camada ja provada na producao de 2026-10-28 via imagem derivada
+# openchamber-openchamber:plugins-20261028 (construida a partir da imagem viva
+# 7530e47ece24) — ver NOTES-PLUGINS-HANDOFF.md no repo do dashboard.
+# Directorio /usr/local/lib/docker/cli-plugins: system cli-plugins dir, procurado pelo
+# docker CLI antes dos ~/.docker/cli-plugins — vale para root e para openchamber,
+# sem depender do HOME de cada user.
+# NOTA: o pin do opencode-ai deste ficheiro NAO foi alterado (decisao do dono 2026-10-12:
+# um rebuild deste Dockerfile nao pode bumpar o opencode em silencio; prod = 1.18.21).
+RUN mkdir -p /usr/local/lib/docker/cli-plugins \
+  && curl -fL https://github.com/docker/compose/releases/download/v5.6.1/docker-compose-linux-x86_64 -o /usr/local/lib/docker/cli-plugins/docker-compose \
+  && curl -fL https://github.com/docker/buildx/releases/download/v0.38.1/buildx-v0.38.1.linux-amd64 -o /usr/local/lib/docker/cli-plugins/docker-buildx \
+  && chmod +x /usr/local/lib/docker/cli-plugins/docker-compose /usr/local/lib/docker/cli-plugins/docker-buildx
 
 # Replace the base image's 'bun' user (UID 1000) with 'openchamber'
 # so mounted volumes with 1000:1000 ownership work correctly.
@@ -160,6 +174,15 @@ COPY scripts/clear-stale-locks.sh /home/openchamber/clear-stale-locks.sh
 # every container recreate/rebuild. Backgrounded from ENTRYPOINT below so it can
 # poll for files that only appear ~60-120s into startup.
 COPY scripts/apply-known-patches.sh /home/openchamber/apply-known-patches.sh
+
+# 2026-10-29: wrappers fdx-* (orientacao em PATH; contrato em dispatch/tests/fdx-mcp-wrapper-contract.test.py).
+# Vivem em ~/.local/bin, que NAO e volume: o recreate de 28-Out (22:21Z) apagou os 17 e o gate de testes
+# do dispatch ficou 6 h em backoff. Aqui entram na imagem (camada 1); o gate repoe-os se faltarem
+# (camada 2, dispatch-tests-gate.sh::garantir_fdx_wrappers) e o apply-known-patches.sh tambem (camada 3).
+# A lista de nomes e a do instalador: se mudar num sitio, mudar no outro (scripts/install-fdx-wrappers.sh
+# e uma COPIA de data/opencode/config/dispatch/bin/install-fdx-wrappers.sh).
+COPY scripts/install-fdx-wrappers.sh /home/openchamber/install-fdx-wrappers.sh
+RUN bash /home/openchamber/install-fdx-wrappers.sh /home/openchamber/.local/bin
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/packages/web/node_modules ./packages/web/node_modules

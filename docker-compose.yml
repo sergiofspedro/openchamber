@@ -51,7 +51,6 @@ services:
       - /home/pipeline/pipeline/github/Claude:/home/pipeline/pipeline/github/Claude
       - /home/pipeline/.openclaw/personal-context-vault:/home/openchamber/workspaces/obsidian-vault
       - ./data/gitconfig:/home/openchamber/.gitconfig
-      - /run/user/1000/openclaw-secrets:/run/secrets:ro
       # 2026-09-03 (tmpfs hardening): shared in-memory volume (tmpfs, 1 MiB)
       # with the infisical-agent sidecar. The sidecar writes active.env to it;
       # this service reads it. active.env lives ONLY in RAM — no host-disk
@@ -91,6 +90,10 @@ services:
       # apagar a linha ALLOW_UNAUTHENTICATED_LAN e descomentar esta:
       #   OPENCHAMBER_UI_PASSWORD: ${OPENCHAMBER_UI_PASSWORD:-}
       OPENCHAMBER_ALLOW_UNAUTHENTICATED_LAN: "true"
+      # 2026-10-12: deixava o ditado falar com o stt-whisper (host Docker). O stt-whisper foi APAGADO a 2026-10-17 (STT passou a local/Parakeet v3);
+      # esta flag ja nao e precisa mas manter evita recriar o container; remover na proxima recriacao.
+      # Sem isto o OpenChamber recusa o URL: "Remote custom server URLs are disabled".
+      OPENCHAMBER_ALLOW_REMOTE_OPENAI_COMPAT_URLS: "true"
       # TELEGRAM_BOT_TOKEN_GUARDIAN + TELEGRAM_USER_ID are now injected by the
       # infisical-agent sidecar (B1 migration, 2026-09-03) via /run/secrets/active.env.
       # See `infisical-agent` service below. Plaintext .env no longer needs them.
@@ -157,6 +160,14 @@ services:
     # um respawn normal nao chega a cinco, o motor morto com a auto-cura
     # encravada chega. start_period conservador: nao tenho medicao do arranque
     # a frio, e prefiro esperar de mais a declarar unhealthy quem ainda sobe.
+    # 2026-10-29: sem core dumps. O container corria com `ulimit -c unlimited` e core_pattern=core: um
+    # processo grande a morrer escreve o core no cwd (2,3 GB em app/core, 13:18Z, com o disco a 97 %) e
+    # empurra o `/` para o limite, onde o SQLite do opencode falha («database or disk is full») e as
+    # waves morrem a meio. Efectivo no proximo recreate do servico.
+    ulimits:
+      core:
+        soft: 0
+        hard: 0
     healthcheck:
       test: ["CMD", "bash", "/home/openchamber/.config/opencode/scripts/healthcheck-motor.sh"]
       interval: 60s
@@ -209,9 +220,12 @@ services:
     networks: [pipeline-net]
     healthcheck:
       test: ["CMD-SHELL", "test -s /run/secrets/active.env"]
-      interval: 30s
+      # 2026-10-25: 30s -> 120s. Sidecar que so escreve um ficheiro no arranque; a sonda e um
+      # `test -s`, mas cada exec passa pelo dockerd. Deteccao de falha: 3 x 120s = 6 min.
+      # Efectivo no proximo recreate do servico (editar o compose nao recria nada).
+      interval: 120s
       timeout: 5s
-      retries: 5
+      retries: 3
       start_period: 30s
     user: "0:0"
 

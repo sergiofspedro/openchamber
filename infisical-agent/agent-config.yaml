@@ -23,10 +23,13 @@ auth:
     client-secret: /run/secrets/infisical/client-secret
 
 templates:
+  # 2026-10-21: allow GMAIL_* keys through the filter below.
+  # The filter drops every key not explicitly listed, so before this the
+  # app never received the Gmail credentials from Infisical.
   - template-content: |
       {{- with secret "bdec46df-92ea-43ca-8cd3-3607add4205b" "prod" "/" -}}
       {{- range . -}}
-      {{- if or (eq .Key "OPENCHAMBER_UI_PASSWORD") (eq .Key "TELEGRAM_BOT_TOKEN_GUARDIAN") (eq .Key "TELEGRAM_USER_ID") (eq .Key "GITHUB_TOKEN_OPENCHAMBER") -}}
+      {{- if or (eq .Key "OPENCHAMBER_UI_PASSWORD") (eq .Key "TELEGRAM_BOT_TOKEN_GUARDIAN") (eq .Key "TELEGRAM_USER_ID") (eq .Key "GITHUB_TOKEN_OPENCHAMBER") (eq .Key "NOTION_API_KEY") (eq .Key "GMAIL_USER") (eq .Key "GMAIL_OAUTH_CLIENT_ID") (eq .Key "GMAIL_OAUTH_CLIENT_SECRET") (eq .Key "GMAIL_OAUTH_REFRESH_TOKEN") (eq .Key "GMAIL_APP_PASSWORD") -}}
       {{ .Key }}={{ .Value }}
       {{ end -}}
       {{- end -}}
